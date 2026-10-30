@@ -189,9 +189,9 @@ static int conn_state(BIO *b, BIO_CONNECT *c)
             break;
 
         case BIO_CONN_S_BLOCKED_CONNECT:
-            /* wait for socket being writable, before querying BIO_sock_error */
-            if (BIO_socket_wait(b->num, 0, time(NULL)) == 0)
-                break;
+            /* Return for retry until writable, before querying BIO_sock_error. */
+            if (BIO_socket_wait(b->num, 0, time(NULL)) <= 0)
+                goto exit_loop;
             i = BIO_sock_error(b->num);
             if (i != 0) {
                 BIO_clear_retry_flags(b);
@@ -305,13 +305,12 @@ static int conn_free(BIO *a)
 
     BIO_free(data->dgram_bio);
 
-    if (a->shutdown) {
+    if (a->shutdown)
         conn_close_socket(a);
-        BIO_CONNECT_free(data);
-        a->ptr = NULL;
-        a->flags = 0;
-        a->init = 0;
-    }
+    BIO_CONNECT_free(data);
+    a->ptr = NULL;
+    a->flags = 0;
+    a->init = 0;
     return 1;
 }
 

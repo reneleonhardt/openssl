@@ -33,6 +33,13 @@ OpenSSL 4.2
 
 ### Changes between 4.1 and 4.2 [xx XXX xxxx]
 
+ * Added `wasm32-wasip1`, `wasm32-wasip2` and `wasm32-wasip3` targets
+   for static libcrypto and libssl builds. Preview 1 supports TLS over
+   memory BIOs. Preview 2 and Preview 3 also support TCP.
+   See NOTES-WASI.md for build instructions and runtime limitations.
+
+   *Rene Leonhardt*
+
  * Added `BIO_dgram_pair_set0_pcap_file()` which intercepts and writes UDP
    datagrams exchanged of over `BIO_dgram_pair` bio memory object to file
    in libpcap format. To enable `BIO_dgram_pair_set0_pcap_file()` the build

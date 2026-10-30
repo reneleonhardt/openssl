@@ -11,8 +11,9 @@ use OpenSSL::Test::Utils;
 
 setup("test_rio_notifier");
 
-plan skip_all => "RIO notifier tests require QUIC"
-    if disabled("quic");
+plan skip_all => "RIO notifier unavailable in this build"
+    if disabled("sock")
+        || (disabled("quic") && config('target') !~ /^wasm32-wasip/);
 
 plan tests => 1;
 

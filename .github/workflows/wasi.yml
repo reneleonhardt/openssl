@@ -1,0 +1,73 @@
+# Copyright 2026 The OpenSSL Project Authors. All Rights Reserved.
+#
+# Licensed under the Apache License 2.0 (the "License").  You may not use
+# this file except in compliance with the License.  You can obtain a copy
+# in the file LICENSE in the source distribution or at
+# https://www.openssl.org/source/license.html
+
+name: WASI
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  wasi:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        preview: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install pinned tools
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 -o sdk.tar.gz https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz
+          curl --fail --location --retry 3 -o runtime.tar.xz https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.1/wasmtime-v50.0.1-x86_64-linux.tar.xz
+          echo 'b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4  sdk.tar.gz' | sha256sum --check
+          echo '685466455dd42a14774a86c36c8f2e45cbb9bd6d92a850139315df60a75498a5  runtime.tar.xz' | sha256sum --check
+          tar -xf sdk.tar.gz
+          tar -xf runtime.tar.xz
+          echo "$PWD/wasi-sdk-34.0-x86_64-linux/bin" >> "$GITHUB_PATH"
+          echo "$PWD/wasmtime-v50.0.1-x86_64-linux" >> "$GITHUB_PATH"
+      - name: Build and test
+        env:
+          PREVIEW: ${{ matrix.preview }}
+        run: |
+          mkdir build
+          cd build
+          perl ../Configure "wasm32-wasip$PREVIEW"
+          targets=(build_libs test/wasi_test.wasm test/wasi_entropy_test.wasm)
+          network=()
+          if [ "$PREVIEW" != 1 ]; then
+            targets+=(test/rio_notifier_test.wasm)
+            network=(-S inherit-network=y)
+          fi
+          make -j2 "${targets[@]}"
+          make run_tests TESTS=test_wasi \
+            EXE_SHELL="wasmtime run -W timeout=60s ${network[*]} --dir $GITHUB_WORKSPACE"
+          if [ "$PREVIEW" = 3 ]; then network=(); fi
+          make run_tests TESTS=test_rio_notifier \
+            EXE_SHELL="wasmtime run -W timeout=60s ${network[*]} --dir $GITHUB_WORKSPACE"
+      - name: Native TLS interoperability
+        if: matrix.preview != 1
+        env:
+          PREVIEW: ${{ matrix.preview }}
+        run: |
+          "wasm32-wasip$PREVIEW-clang" -Ibuild/include -Iinclude \
+            demos/guide/tls-client-block.c build/libssl.a build/libcrypto.a \
+            -o build/tls-client-block.wasm
+          python3 test/wasi_interop_test.py wasmtime build/tls-client-block.wasm
+      - name: AES regression vectors
+        run: |
+          make -C build -j2 test/evp_test.wasm
+          wasmtime run -W timeout=60s --dir "$GITHUB_WORKSPACE" \
+            build/test/evp_test.wasm \
+            "$GITHUB_WORKSPACE/test/recipes/30-test_evp_data/evpciph_aes_common.txt"
+      - name: Pending I/O and resource lifetimes
+        if: matrix.preview != 1
+        run: |
+          make -C build -j2 test/wasi_io_test.wasm
+          python3 test/wasi_io_test.py wasmtime build/test/wasi_io_test.wasm

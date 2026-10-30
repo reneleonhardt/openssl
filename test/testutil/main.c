@@ -38,7 +38,13 @@
  */
 #define TEST_WATCHDOG_TIMEOUT 1800
 
-#if !defined(OPENSSL_SYS_WINDOWS)
+#if defined(__wasi__)
+/* WASI has no alarm. Set a timeout in the host runtime. */
+static void test_watchdog_start(unsigned int timeout)
+{
+    (void)timeout;
+}
+#elif !defined(OPENSSL_SYS_WINDOWS)
 #include <unistd.h>
 #include <signal.h>
 
@@ -95,7 +101,7 @@ static void test_watchdog_start(unsigned int timeout)
     CreateThread(NULL, 0, test_watchdog_thread,
         (LPVOID)(uintptr_t)timeout, 0, NULL);
 }
-#endif /* !defined(OPENSSL_SYS_WINDOWS) */
+#endif /* defined(__wasi__) */
 
 static void setup_test_watchdog(void)
 {

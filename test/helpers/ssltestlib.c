@@ -14,12 +14,12 @@
 #include "ssltestlib.h"
 #include "../testutil.h"
 
-#if (!defined(OPENSSL_NO_KTLS) || !defined(OPENSSL_NO_QUIC)) && !defined(OPENSSL_NO_POSIX_IO) && !defined(OPENSSL_NO_SOCK)
+#if !defined(OPENSSL_NO_POSIX_IO) && !defined(OPENSSL_NO_SOCK)
 #define OSSL_USE_SOCKETS 1
 #include "internal/e_winsock.h"
 #include "internal/sockets.h"
 #include <openssl/bio.h>
-#endif
+#endif /* !defined(OPENSSL_NO_POSIX_IO) && !defined(OPENSSL_NO_SOCK) */
 
 static int tls_dump_new(BIO *bi);
 static int tls_dump_free(BIO *a);
@@ -1456,7 +1456,7 @@ int create_test_sockets(int *cfdp, int *sfdp, int socktype, BIO_ADDR *saddr)
 {
     struct sockaddr_in sin;
     const char *host = "127.0.0.1";
-    int cfd_connected = 0, ret = 0;
+    int ret = 0;
     socklen_t slen = sizeof(sin);
     int afd = -1, cfd = -1, sfd = -1;
 
@@ -1492,24 +1492,15 @@ int create_test_sockets(int *cfdp, int *sfdp, int socktype, BIO_ADDR *saddr)
         goto out;
 
     /*
-     * If a DGRAM socket then we don't call "accept" or "connect" - so act like
-     * we already called them.
+     * Datagram sockets do not need accept or connect.
      */
     if (socktype == SOCK_DGRAM) {
-        cfd_connected = 1;
         sfd = afd;
         afd = -1;
-    }
-
-    while (sfd == -1 || !cfd_connected) {
-        sfd = accept(afd, NULL, 0);
-        if (sfd == -1 && errno != EAGAIN)
-            goto out;
-
-        if (!cfd_connected && connect(cfd, (struct sockaddr *)&sin, sizeof(sin)) < 0)
-            goto out;
-        else
-            cfd_connected = 1;
+    } else if (connect(cfd, (struct sockaddr *)&sin, sizeof(sin)) < 0
+        || BIO_socket_wait(afd, 1, time(NULL) + 10) != 1
+        || (sfd = accept(afd, NULL, NULL)) == -1) {
+        goto out;
     }
 
     if (!BIO_socket_nbio(cfd, 1) || !BIO_socket_nbio(sfd, 1))
@@ -1701,9 +1692,12 @@ int create_bare_ssl_connection_ex(SSL *serverssl, SSL *clientssl, int want,
             if (retc <= 0)
                 err = SSL_get_error(clientssl, retc);
             icm_count++;
+            if (!isdtls)
+                break;
         }
 
-        if (!clienterr && retc <= 0 && err != SSL_ERROR_WANT_READ) {
+        if (!clienterr && retc <= 0 && err != SSL_ERROR_WANT_READ
+            && err != SSL_ERROR_WANT_WRITE) {
             TEST_info("SSL_connect() failed %d, %d", retc, err);
             if (want != SSL_ERROR_SSL)
                 TEST_openssl_errors();
@@ -1735,10 +1729,13 @@ int create_bare_ssl_connection_ex(SSL *serverssl, SSL *clientssl, int want,
                     err = SSL_get_error(serverssl, rets);
                 ism_count++;
             }
+            if (!isdtls)
+                break;
         }
 
         if (!servererr && rets <= 0
             && err != SSL_ERROR_WANT_READ
+            && err != SSL_ERROR_WANT_WRITE
             && err != SSL_ERROR_WANT_X509_LOOKUP) {
             TEST_info("SSL_accept() failed %d, %d", rets, err);
             if (want != SSL_ERROR_SSL)
@@ -1770,6 +1767,21 @@ int create_bare_ssl_connection_ex(SSL *serverssl, SSL *clientssl, int want,
                 icm_count++;
             }
         }
+#if defined(__wasi__) && !defined(OPENSSL_NO_SOCK)
+        /* A readiness wait lets the WASI host advance pending async I/O. */
+        if (!clienterr && !servererr && !SSL_want_x509_lookup(serverssl)) {
+            struct pollfd fds[2] = {
+                { retc <= 0 ? SSL_get_fd(clientssl) : -1,
+                    SSL_want_write(clientssl) ? POLLOUT : POLLIN, 0 },
+                { rets <= 0 ? SSL_get_fd(serverssl) : -1,
+                    SSL_want_write(serverssl) ? POLLOUT : POLLIN, 0 }
+            };
+
+            if ((fds[0].fd >= 0 || fds[1].fd >= 0)
+                && poll(fds, 2, 10000) <= 0)
+                goto err;
+        }
+#endif /* defined(__wasi__) && !defined(OPENSSL_NO_SOCK) */
         if (++abortctr == MAXLOOPS) {
             TEST_info("No progress made");
             goto err;

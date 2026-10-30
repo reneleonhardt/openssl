@@ -14,11 +14,11 @@
 #include "log.h"
 
 #ifndef HAVE_FORK
-#if defined(OPENSSL_SYS_VMS) || defined(OPENSSL_SYS_WINDOWS)
+#if defined(OPENSSL_SYS_VMS) || defined(OPENSSL_SYS_WINDOWS) || defined(__wasi__)
 #define HAVE_FORK 0
 #else
 #define HAVE_FORK 1
-#endif
+#endif /* defined(OPENSSL_SYS_VMS) || defined(OPENSSL_SYS_WINDOWS) || defined(__wasi__) */
 #endif
 
 #if HAVE_FORK

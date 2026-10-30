@@ -50,6 +50,9 @@ A value of 0 enables waiting indefinitely (i.e, no timeout),
 while a value < 0 means that BIO_do_connect() is tried only once.
 The function may, directly or indirectly, invoke ERR_clear_error().
 
+The timeout is checked between connection attempts and waits. It cannot
+interrupt synchronous name resolution.
+
 =head1 RETURN VALUES
 
 BIO_socket_wait(), BIO_socket_ready(), BIO_wait(), and BIO_do_connect_retry()

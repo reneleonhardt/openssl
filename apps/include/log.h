@@ -11,8 +11,9 @@
 #define OSSL_APPS_LOG_H
 
 #include <openssl/bio.h>
-#if !defined(OPENSSL_SYS_VMS) && !defined(OPENSSL_SYS_WINDOWS) \
-    && !defined(OPENSSL_NO_SOCK) && !defined(OPENSSL_NO_POSIX_IO)
+#if !defined(OPENSSL_SYS_VMS) && !defined(OPENSSL_SYS_WINDOWS)    \
+    && !defined(OPENSSL_NO_SOCK) && !defined(OPENSSL_NO_POSIX_IO) \
+    && !defined(__wasi__)
 #include <syslog.h>
 #else
 #define LOG_EMERG 0
@@ -23,7 +24,7 @@
 #define LOG_NOTICE 5
 #define LOG_INFO 6
 #define LOG_DEBUG 7
-#endif
+#endif /* !defined(OPENSSL_SYS_VMS) && !defined(OPENSSL_SYS_WINDOWS) && !defined(OPENSSL_NO_SOCK) && !defined(OPENSSL_NO_POSIX_IO) && !defined(__wasi__) */
 
 #undef LOG_TRACE
 #define LOG_TRACE (LOG_DEBUG + 1)

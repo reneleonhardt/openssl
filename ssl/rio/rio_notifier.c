@@ -12,7 +12,12 @@
 #include <openssl/err.h>
 #include "internal/rio_notifier.h"
 
-#if !defined(OPENSSL_SYS_WINDOWS) || RIO_NOTIFIER_METHOD == RIO_NOTIFIER_METHOD_SOCKETPAIR
+#if RIO_NOTIFIER_METHOD == RIO_NOTIFIER_METHOD_PIPE
+#include <fcntl.h>
+#endif /* RIO_NOTIFIER_METHOD == RIO_NOTIFIER_METHOD_PIPE */
+
+#if RIO_NOTIFIER_METHOD != RIO_NOTIFIER_METHOD_PIPE \
+    && (!defined(OPENSSL_SYS_WINDOWS) || RIO_NOTIFIER_METHOD == RIO_NOTIFIER_METHOD_SOCKETPAIR)
 /*
  * Sets a socket as close-on-exec, except that this is a no-op if we are certain
  * we do not need to do this or the OS does not support the concept.
@@ -25,7 +30,7 @@ static int set_cloexec(int fd)
     return 1;
 #endif
 }
-#endif
+#endif /* RIO_NOTIFIER_METHOD != RIO_NOTIFIER_METHOD_PIPE && (!defined(OPENSSL_SYS_WINDOWS) || RIO_NOTIFIER_METHOD == RIO_NOTIFIER_METHOD_SOCKETPAIR) */
 
 #if defined(OPENSSL_SYS_WINDOWS)
 
@@ -276,6 +281,22 @@ err:
     return 0;
 }
 
+#elif RIO_NOTIFIER_METHOD == RIO_NOTIFIER_METHOD_PIPE
+
+int ossl_rio_notifier_init(RIO_NOTIFIER *nfy)
+{
+    int fds[2];
+
+    if (pipe2(fds, O_NONBLOCK | O_CLOEXEC) < 0) {
+        ERR_raise_data(ERR_LIB_SYS, get_last_sys_error(), "calling pipe2()");
+        return 0;
+    }
+
+    nfy->rfd = fds[0];
+    nfy->wfd = fds[1];
+    return 1;
+}
+
 #elif RIO_NOTIFIER_METHOD == RIO_NOTIFIER_METHOD_SOCKETPAIR
 
 int ossl_rio_notifier_init(RIO_NOTIFIER *nfy)
@@ -329,7 +350,7 @@ err:
     return 0;
 }
 
-#endif
+#endif /* RIO_NOTIFIER_METHOD == RIO_NOTIFIER_METHOD_SOCKET */
 
 void ossl_rio_notifier_cleanup(RIO_NOTIFIER *nfy)
 {
@@ -371,10 +392,10 @@ int ossl_rio_notifier_unsignal(RIO_NOTIFIER *nfy)
      */
     do
         rd = readsocket(nfy->rfd, (void *)buf, sizeof(buf));
-    while (rd == sizeof(buf)
+    while (rd > 0
         || (rd < 0 && get_last_socket_error_is_eintr()));
 
-    if (rd < 0 && !BIO_fd_non_fatal_error(get_last_socket_error()))
+    if (rd < 0 && !BIO_sock_non_fatal_error(get_last_socket_error()))
         return 0;
 
     return 1;

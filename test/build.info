@@ -433,11 +433,11 @@ IF[{- !$disabled{tests} -}]
   INCLUDE[packettest]=../include ../apps/include
   DEPEND[packettest]=../libcrypto libtestutil.a
 
-  IF[{- !$disabled{'quic'} -}]
-      SOURCE[rio_notifier_test]=rio_notifier_test.c
-      INCLUDE[rio_notifier_test]=.. ../include ../apps/include
-      DEPEND[rio_notifier_test]=../libcrypto.a ../libssl.a libtestutil.a
+  SOURCE[rio_notifier_test]=rio_notifier_test.c
+  INCLUDE[rio_notifier_test]=.. ../include ../apps/include
+  DEPEND[rio_notifier_test]=../libcrypto.a ../libssl.a libtestutil.a
 
+  IF[{- !$disabled{'quic'} -}]
       SOURCE[rio_poll_builder_test]=rio_poll_builder_test.c
       INCLUDE[rio_poll_builder_test]=.. ../include ../apps/include
       DEPEND[rio_poll_builder_test]=../libcrypto.a ../libssl.a libtestutil.a
@@ -706,6 +706,33 @@ IF[{- !$disabled{tests} -}]
   SOURCE[sslapitest]=sslapitest.c helpers/ssltestlib.c filterprov.c tls-provider.c
   INCLUDE[sslapitest]=../include ../apps/include ../providers/common/include ..
   DEPEND[sslapitest]=../libcrypto.a ../libssl.a libtestutil.a
+
+  IF[{- $config{target} =~ /^wasm32-wasip/ && !$disabled{tls} -}]
+    PROGRAMS{noinst}=wasi_test wasi_entropy_test
+    SOURCE[wasi_test]=wasi_test.c helpers/ssltestlib.c
+    INCLUDE[wasi_test]=../include ../apps/include ..
+    DEPEND[wasi_test]=../libssl ../libcrypto libtestutil.a
+    SOURCE[wasi_entropy_test]=wasi_entropy_test.c
+    INCLUDE[wasi_entropy_test]=../include
+    DEPEND[wasi_entropy_test]=../libcrypto
+    IF[{- !$disabled{sock} -}]
+      PROGRAMS{noinst}=rio_notifier_test
+      IF[{- $disabled{quic} && $disabled{dtls} -}]
+        SOURCE[rio_notifier_test]=../ssl/rio/rio_notifier.c
+      ENDIF
+      IF[{- $config{target} eq "wasm32-wasip3" -}]
+        WRAP[rio_notifier_test]=pipe2 read
+        UNIT_TEST[rio_notifier_test]=
+      ENDIF
+    ENDIF
+  ENDIF
+
+  IF[{- $config{target} =~ /^wasm32-wasip/ && !$disabled{sock} -}]
+    PROGRAMS{noinst}=wasi_io_test
+    SOURCE[wasi_io_test]=wasi_io_test.c
+    INCLUDE[wasi_io_test]=../include ../apps/include ..
+    DEPEND[wasi_io_test]=../libcrypto libtestutil.a
+  ENDIF
 
   SOURCE[handshake-memfail]=handshake-memfail.c helpers/ssltestlib.c
   INCLUDE[handshake-memfail]=../include ../apps/include

@@ -269,8 +269,10 @@ int report_server_accept(BIO *out, int asock, int with_address, int with_pid)
         OPENSSL_free(hostname);
         OPENSSL_free(service);
     }
+#if !defined(__wasi__)
     if (with_pid)
         success *= BIO_printf(out, " PID=%d", getpid()) > 0;
+#endif /* !defined(__wasi__) */
     success *= BIO_puts(out, "\n") > 0;
     (void)BIO_flush(out);
 

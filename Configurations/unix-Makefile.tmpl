@@ -2119,8 +2119,14 @@ EOF
           }
       }
       my $wrapflags = '';
+      # WASI's weak entry point does not extract main from an archive.
+      if ($config{target} =~ /^wasm32-wasip/
+          && grep { $unified_info{attributes}->{libraries}->{$_}->{has_main} }
+                  @{$args{deps}}) {
+          $wrapflags = ' -Wl,--undefined=__main_argc_argv';
+      }
       if (defined $unified_info{wraps}->{$args{bin}}) {
-          $wrapflags = ' ' . join(' ',
+          $wrapflags .= ' ' . join(' ',
                                   map { "-Wl,--wrap=$_" }
                                   @{$unified_info{wraps}->{$args{bin}}});
       }

@@ -485,10 +485,10 @@ static void test_conn_new(void **state)
 
 static void test_conn_free_no_shutdown(void **state)
 {
-    /* shutdown=0: conn_close_socket and BIO_CONNECT_free are both skipped */
-    BIO *bio = BIO_new(BIO_s_connect());
+    /* BIO_NOCLOSE releases the BIO without closing its borrowed socket. */
+    BIO *bio = *state;
 
-    assert_non_null(bio);
+    bio->num = FAKE_SOCKET;
     bio->shutdown = BIO_NOCLOSE;
     BIO_free(bio);
     *state = NULL;
@@ -685,11 +685,21 @@ static void test_conn_state_blocked_ok(void **state)
     /* Pre-set BLOCKED_CONNECT: socket becomes writable, no error -> OK */
     BIO *bio = *state;
     BIO_CONNECT *data = get_data(bio);
+    int i;
 
     data->state = BIO_CONN_S_BLOCKED_CONNECT;
     data->addr_iter = &g_addrinfo1;
     bio->num = FAKE_SOCKET;
 
+    BIO_set_retry_special(bio);
+    bio->retry_reason = BIO_RR_CONNECT;
+    for (i = 0; i < 2; i++) {
+        expect_BIO_socket_wait(FAKE_SOCKET, 0, -i);
+        assert_true(BIO_do_connect(bio) <= 0);
+        assert_true(BIO_should_retry(bio));
+        assert_int_equal(BIO_get_retry_reason(bio), BIO_RR_CONNECT);
+        assert_int_equal(data->state, BIO_CONN_S_BLOCKED_CONNECT);
+    }
     expect_BIO_socket_wait(FAKE_SOCKET, 0, 1);
     expect_BIO_sock_error(FAKE_SOCKET, 0);
 

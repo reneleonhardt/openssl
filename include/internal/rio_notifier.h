@@ -1,5 +1,5 @@
 /*
- * Copyright 2024-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2024-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -22,15 +22,18 @@
  */
 #define RIO_NOTIFIER_METHOD_SOCKET 1
 #define RIO_NOTIFIER_METHOD_SOCKETPAIR 2
+#define RIO_NOTIFIER_METHOD_PIPE 3
 
 #if !defined(RIO_NOTIFIER_METHOD)
-#if defined(OPENSSL_SYS_WINDOWS)
+#if defined(__wasip3__)
+#define RIO_NOTIFIER_METHOD RIO_NOTIFIER_METHOD_PIPE
+#elif defined(OPENSSL_SYS_WINDOWS) || defined(__wasi__)
 #define RIO_NOTIFIER_METHOD RIO_NOTIFIER_METHOD_SOCKET
 #elif defined(OPENSSL_SYS_UNIX)
 #define RIO_NOTIFIER_METHOD RIO_NOTIFIER_METHOD_SOCKETPAIR
 #else
 #define RIO_NOTIFIER_METHOD RIO_NOTIFIER_METHOD_SOCKET
-#endif
+#endif /* defined(__wasip3__) */
 #endif
 
 typedef struct rio_notifier_st {

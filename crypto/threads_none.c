@@ -322,10 +322,10 @@ int openssl_init_fork_handlers(void)
 
 int openssl_get_fork_id(void)
 {
-#if defined(OPENSSL_SYS_UNIX)
+#if defined(OPENSSL_SYS_UNIX) && !defined(__wasi__)
     return getpid();
 #else
     return 0;
-#endif
+#endif /* defined(OPENSSL_SYS_UNIX) && !defined(__wasi__) */
 }
 #endif

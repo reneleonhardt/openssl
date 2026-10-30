@@ -203,12 +203,14 @@ void ossl_rand_pool_keep_random_devices_open(int keep)
 #endif
 
 #if defined(OPENSSL_RAND_SEED_OS)
+#define OPENSSL_RAND_SEED_GETRANDOM
+#if !defined(__wasi__)
 #if !defined(DEVRANDOM)
 #error "OS seeding requires DEVRANDOM to be configured"
 #endif
-#define OPENSSL_RAND_SEED_GETRANDOM
 #define OPENSSL_RAND_SEED_DEVRANDOM
-#endif
+#endif /* !defined(__wasi__) */
+#endif /* defined(OPENSSL_RAND_SEED_OS) */
 
 #if ((defined(__FreeBSD__) && __FreeBSD_version < 1200061)     \
     || (defined(__NetBSD__) && __NetBSD_Version < 1000000000)) \
@@ -778,7 +780,9 @@ int ossl_pool_add_nonce_data(RAND_POOL *pool)
      * ensure that the nonce is unique with high probability for
      * different process instances.
      */
+#if !defined(__wasi__)
     data.pid = getpid();
+#endif /* !defined(__wasi__) */
     data.tid = CRYPTO_THREAD_get_current_id();
     data.time = get_time_stamp();
 
