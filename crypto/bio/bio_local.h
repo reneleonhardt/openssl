@@ -127,6 +127,21 @@ struct bio_st {
 
 #ifndef OPENSSL_NO_SOCK
 
+#if defined(__wasi__)
+typedef struct ossl_wasi_lookup_st OSSL_WASI_LOOKUP;
+/**
+ * Start or poll a client lookup using host, service, family and socktype.
+ * *lookup owns the pending state. The caller owns the list returned in *res.
+ * @returns 1 on completion, 0 on error, -1 while pending.
+ */
+int ossl_bio_lookup_wasi(OSSL_WASI_LOOKUP **lookup, const char *host,
+    const char *service, int family, int socktype, BIO_ADDRINFO **res);
+/** Cancel the host operation, release owned state, and clear *lookup. */
+void ossl_bio_lookup_wasi_free(OSSL_WASI_LOOKUP **lookup);
+/** Reset a pending connect lookup in bio's chain, if present. */
+void ossl_bio_wasi_cancel_lookup(BIO *bio);
+#endif /* defined(__wasi__) */
+
 typedef struct bio_connect_st {
     int state;
     int connect_family;
@@ -156,6 +171,9 @@ typedef struct bio_connect_st {
      * read/write(mmsg) calls to this if present.
      */
     BIO *dgram_bio;
+#if defined(__wasi__)
+    OSSL_WASI_LOOKUP *lookup; /**< Owned independently of the socket. */
+#endif /* defined(__wasi__) */
 } BIO_CONNECT;
 
 typedef struct bio_accept_st {

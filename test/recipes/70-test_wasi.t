@@ -16,9 +16,10 @@ use OpenSSL::Test::Utils;
 setup("test_wasi");
 plan skip_all => "WASI targets only" unless config('target') =~ /^wasm32-wasip/;
 plan skip_all => "TLS disabled" if disabled('tls');
-plan tests => 2;
+plan tests => disabled('sock') ? 2 : 3;
 
 my @certs = map { rel2abs(srctop_file("test", "certs", $_)) }
             qw(servercert.pem serverkey.pem rootcert.pem);
 ok(run(test(["wasi_test", @certs])), "WASI crypto and TLS");
 ok(run(test(["wasi_entropy_test"])), "WASI rejects host entropy failure");
+ok(run(test(["wasi_bio_test"])), "WASI BIO unit contracts") unless disabled('sock');

@@ -42,7 +42,7 @@ jobs:
           targets=(build_libs test/wasi_test.wasm test/wasi_entropy_test.wasm)
           network=()
           if [ "$PREVIEW" != 1 ]; then
-            targets+=(test/rio_notifier_test.wasm)
+            targets+=(test/rio_notifier_test.wasm test/wasi_bio_test.wasm)
             network=(-S inherit-network=y)
           fi
           make -j2 "${targets[@]}"
@@ -70,4 +70,5 @@ jobs:
         if: matrix.preview != 1
         run: |
           make -C build -j2 test/wasi_io_test.wasm
-          python3 test/wasi_io_test.py wasmtime build/test/wasi_io_test.wasm
+          python3 test/wasi_io_test.py wasmtime build/test/wasi_io_test.wasm \
+            --tls-guest build/test/wasi_test.wasm

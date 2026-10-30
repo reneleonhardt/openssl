@@ -1058,6 +1058,13 @@ int BIO_do_connect_retry(BIO *bio, int timeout, int nap_milliseconds)
     BIO_set_nbio(bio, !blocking);
 
 retry:
+#if defined(__wasi__) && !defined(OPENSSL_NO_SOCK)
+    if (max_time != 0 && time(NULL) >= max_time) {
+        ossl_bio_wasi_cancel_lookup(bio);
+        ERR_raise(ERR_LIB_BIO, BIO_R_CONNECT_TIMEOUT);
+        return 0;
+    }
+#endif /* defined(__wasi__) && !defined(OPENSSL_NO_SOCK) */
     ERR_set_mark();
     rv = BIO_do_connect(bio);
 
@@ -1091,6 +1098,9 @@ retry:
             rv = bio_wait(bio, max_time, nap_milliseconds);
             if (rv > 0)
                 goto retry;
+#if defined(__wasi__) && !defined(OPENSSL_NO_SOCK)
+            ossl_bio_wasi_cancel_lookup(bio);
+#endif /* defined(__wasi__) && !defined(OPENSSL_NO_SOCK) */
             ERR_raise(ERR_LIB_BIO,
                 rv == 0 ? BIO_R_CONNECT_TIMEOUT : BIO_R_CONNECT_ERROR);
         } else {

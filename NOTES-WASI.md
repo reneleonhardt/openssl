@@ -22,11 +22,12 @@ mkdir -p build-wasip2
 cd build-wasip2
 perl ../Configure wasm32-wasip2
 make build_libs test/wasi_test.wasm test/wasi_entropy_test.wasm \
-    test/rio_notifier_test.wasm
+    test/rio_notifier_test.wasm test/wasi_bio_test.wasm
 ```
 
 Use a fresh build directory for each target. For Preview 3, select
-`wasm32-wasip3`. For Preview 1, select `wasm32-wasip1` and omit the notifier test.
+`wasm32-wasip3`. For Preview 1, select `wasm32-wasip1` and omit the notifier
+and BIO unit tests.
 Clear native `CC`, `AR`, `RANLIB`, `CPPFLAGS` and `LDFLAGS`, or supply WASI values.
 
 The targets disable assembly, shared libraries, dynamic providers, threads,
@@ -87,6 +88,14 @@ Wait for the direction requested by `SSL_ERROR_WANT_READ` or
 In SDK 34, nonblocking accept checks readiness without suspending the guest.
 A readiness wait lets pending host I/O advance.
 
+Nonblocking connect BIOs use WASI async name lookup. A positive
+`BIO_do_connect_retry()` timeout includes DNS and cancels an unfinished lookup.
+For application deadlines or cancellation, call `BIO_set_nbio(bio, 1)` and retry
+`BIO_do_connect()` from the event loop. Reset or free the BIO to cancel. During
+DNS there is no socket descriptor. `BIO_wait()` can sleep between retries.
+Changing connection parameters or switching to blocking mode also cancels DNS.
+Preview 3 uses a WASI 0.3.2 async import shim because SDK 34's wrapper is synchronous.
+
 Keep the original DNS name for SNI and verification. Set both on the SSL object
 with `SSL_set_tlsext_host_name()` and `SSL_set1_dnsname()`. Use resolved IP addresses
 only for transport.
@@ -95,8 +104,10 @@ only for transport.
 when the BIO owns the socket. `BIO_NOCLOSE` leaves the socket for its owner to
 close. The BIO still releases its lookup resources and connection metadata.
 
-Name lookup uses synchronous `getaddrinfo()`. A BIO timeout cannot
-interrupt it. Hosts need a command timeout or a bounded resolver.
+Blocking connect BIOs and public `BIO_lookup()` still use synchronous
+`getaddrinfo()`. A runtime timeout limits the whole command.
+Cancelling a guest lookup does not stop an OS lookup already running.
+Long-lived hosts need bounded resolver workers or a cancellable host backend.
 
 The I/O tests cover deadlines, cancellation, borrowed descriptors, denied
 access and filesystem escapes. They compare descriptor counts and guest memory
@@ -109,7 +120,8 @@ or macOS `lsof`:
 make test/wasi_io_test.wasm
 # From the source root:
 python3 test/wasi_io_test.py wasmtime \
-    build-wasip3/test/wasi_io_test.wasm
+    build-wasip3/test/wasi_io_test.wasm \
+    --tls-guest build-wasip3/test/wasi_test.wasm
 ```
 
 Certificate stores

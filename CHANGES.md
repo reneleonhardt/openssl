@@ -36,6 +36,7 @@ OpenSSL 4.2
  * Added `wasm32-wasip1`, `wasm32-wasip2` and `wasm32-wasip3` targets
    for static libcrypto and libssl builds. Preview 1 supports TLS over
    memory BIOs. Preview 2 and Preview 3 also support TCP.
+   Nonblocking connect BIOs support DNS deadlines and cancellation.
    See NOTES-WASI.md for build instructions and runtime limitations.
 
    *Rene Leonhardt*

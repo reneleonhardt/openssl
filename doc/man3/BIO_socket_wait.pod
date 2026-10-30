@@ -50,8 +50,10 @@ A value of 0 enables waiting indefinitely (i.e, no timeout),
 while a value < 0 means that BIO_do_connect() is tried only once.
 The function may, directly or indirectly, invoke ERR_clear_error().
 
-The timeout is checked between connection attempts and waits. It cannot
-interrupt synchronous name resolution.
+The function checks the timeout between connection attempts and waits.
+It cannot interrupt synchronous name resolution. WASI nonblocking connect BIOs
+resolve names asynchronously, and their timeout includes DNS. When the timeout
+expires, the function cancels pending lookups.
 
 =head1 RETURN VALUES
 

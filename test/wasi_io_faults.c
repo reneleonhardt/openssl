@@ -114,6 +114,18 @@ int HOOK(poll)(struct pollfd *fds, nfds_t count, int timeout)
 int HOOK(getaddrinfo)(const char *node, const char *service,
     const struct addrinfo *hints, struct addrinfo **result)
 {
+    if (node != NULL && strcmp(node, "server.example") == 0)
+        return REAL_LOOKUP("localhost", service, hints, result);
+    if (node != NULL && strcmp(node, "openssl-wasi-ipv6.invalid") == 0)
+        return REAL_LOOKUP("2001:db8::1", service, hints, result);
+    if (node != NULL && strcmp(node, "openssl-wasi-resolver-error.invalid") == 0) {
+        usleep(5000);
+        return EAI_NONAME;
+    }
+    if (node != NULL && (strcmp(node, "openssl-wasi-deadline.invalid") == 0 || strcmp(node, "openssl-wasi-cancel.invalid") == 0)) {
+        usleep(strcmp(node, "openssl-wasi-deadline.invalid") == 0 ? 3000000 : 5000);
+        return REAL_LOOKUP("127.0.0.1", service, hints, result);
+    }
     if (node != NULL && strcmp(node, "openssl-wasi-denied.invalid") == 0) {
         static const char marker[] = "# forbidden-resolver\n";
 

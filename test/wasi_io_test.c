@@ -12,6 +12,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#if defined(__wasi__)
+#include "../crypto/bio/bio_local.h"
+#endif /* defined(__wasi__) */
 #include "internal/sockets.h"
 #include "testutil.h"
 
@@ -64,6 +67,93 @@ static int test_io(void)
     time_t start;
     char byte;
 
+#if defined(__wasi__)
+    if (strcmp(mode, "lookup-contracts") == 0) {
+        static const struct {
+            const char *host, *service, *numeric;
+            int family;
+        } cases[] = {
+            { "::1", "443", "::1", AF_INET6 },
+            { "openssl-wasi-ipv6.invalid", "443", "2001:db8::1", AF_INET6 },
+            { "openssl-wasi-ipv6.invalid", "443", NULL, AF_INET },
+            { "openssl-wasi-resolver-error.invalid", "443", NULL, AF_INET },
+            { "server.example", "invalid-service", NULL, AF_INET },
+            { NULL, "443", "127.0.0.1", AF_INET },
+            { "server.example", "443", "127.0.0.1", AF_INET }
+        };
+        OSSL_WASI_LOOKUP *lookup = NULL;
+        size_t j;
+
+        for (j = 0; j < sizeof(cases) / sizeof(*cases); j++) {
+            char numeric[INET6_ADDRSTRLEN];
+            unsigned char raw[16];
+            size_t rawlen = sizeof(raw);
+            time_t deadline = time(NULL) + 5;
+
+            do {
+                i = ossl_bio_lookup_wasi(&lookup, cases[j].host, cases[j].service,
+                    cases[j].family, SOCK_STREAM, &addresses);
+                if (i < 0)
+                    OSSL_sleep(1);
+            } while (i < 0 && time(NULL) < deadline);
+            ossl_bio_lookup_wasi_free(&lookup);
+            if (!TEST_int_eq(i, cases[j].numeric != NULL))
+                goto end;
+            if (cases[j].numeric != NULL) {
+                if (!TEST_ptr(addresses)
+                    || !TEST_int_eq(BIO_ADDRINFO_family(addresses), cases[j].family))
+                    goto end;
+                i = TEST_true(BIO_ADDR_rawaddress(BIO_ADDRINFO_address(addresses), raw, &rawlen))
+                    && TEST_ptr(inet_ntop(cases[j].family, raw, numeric, sizeof(numeric)))
+                    && TEST_str_eq(numeric, cases[j].numeric)
+                    && TEST_int_eq(ntohs(BIO_ADDR_rawport(BIO_ADDRINFO_address(addresses))), 443);
+                if (!i)
+                    goto end;
+            }
+            BIO_ADDRINFO_free(addresses);
+            addresses = NULL;
+            ERR_clear_error();
+        }
+        if (!TEST_ptr(bio = BIO_new_connect("openssl-wasi-deadline.invalid:443"))
+            || !pending(bio)
+            || !TEST_ptr(((BIO_CONNECT *)BIO_get_data(bio))->lookup)
+            || !TEST_true(BIO_set_conn_mode(bio, BIO_SOCK_NONBLOCK))
+            || !TEST_ptr(((BIO_CONNECT *)BIO_get_data(bio))->lookup)
+            || !TEST_true(BIO_set_conn_mode(bio, 0))
+            || !TEST_ptr_null(((BIO_CONNECT *)BIO_get_data(bio))->lookup)
+            || !TEST_false(BIO_should_retry(bio))
+            || !TEST_int_eq(BIO_get_fd(bio, NULL), -1))
+            goto end;
+        ret = 1;
+        goto end;
+    }
+    if (strcmp(mode, "lookup-timeout") == 0) {
+        struct timespec before, after;
+
+        if (!TEST_ptr(bio = connection())
+            || !TEST_true(BIO_set_conn_hostname(bio, "openssl-wasi-deadline.invalid")))
+            goto end;
+        clock_gettime(CLOCK_MONOTONIC, &before);
+        i = BIO_do_connect_retry(bio, 1, 1);
+        clock_gettime(CLOCK_MONOTONIC, &after);
+        if (!TEST_int_eq(i, 0)
+            || !TEST_int_eq(ERR_GET_REASON(ERR_peek_last_error()), BIO_R_CONNECT_TIMEOUT)
+            || !TEST_long_lt((after.tv_sec - before.tv_sec) * 1000
+                    + (after.tv_nsec - before.tv_nsec) / 1000000,
+                2000)
+            || !TEST_false(BIO_should_retry(bio))
+            || !TEST_int_eq(BIO_get_fd(bio, NULL), -1)
+            || !TEST_str_eq(BIO_get_conn_hostname(bio), "openssl-wasi-deadline.invalid")
+            || !TEST_true(BIO_set_conn_hostname(bio, "127.0.0.1"))
+            || !TEST_int_eq(BIO_do_connect_retry(bio, 5, 1), 1)
+            || !TEST_int_eq(BIO_socket_wait(BIO_get_fd(bio, NULL), 1, time(NULL) + 5), 1)
+            || !TEST_int_eq(BIO_read(bio, &byte, 1), 1))
+            goto end;
+        ERR_clear_error();
+        ret = 1;
+        goto end;
+    }
+#endif /* defined(__wasi__) */
     if (strcmp(mode, "dns-pending") == 0) {
         BIO_lookup("openssl-wasi-pending.invalid", "443", BIO_LOOKUP_CLIENT,
             AF_INET, SOCK_STREAM, &addresses);
@@ -112,7 +202,51 @@ static int test_io(void)
         } else {
             if (!TEST_ptr(bio = connection()))
                 goto end;
-            if (strcmp(mode, "cancel") == 0) {
+            if (strcmp(mode, "lookup-denied") == 0) {
+                if (!TEST_true(BIO_set_conn_hostname(bio, "openssl-wasi-denied.invalid"))
+                    || !TEST_true(BIO_set_nbio(bio, 1))
+                    || !TEST_int_le(BIO_do_connect(bio), 0)
+                    || !TEST_false(BIO_should_retry(bio)))
+                    goto end;
+            } else if (strcmp(mode, "lookup-cancel") == 0) {
+#if defined(__wasi__)
+                int had_lookup;
+#endif /* defined(__wasi__) */
+                if (!TEST_true(BIO_set_conn_hostname(bio, "openssl-wasi-cancel.invalid"))
+                    || !pending(bio))
+                    goto end;
+                OSSL_sleep(1);
+                if (!TEST_int_eq(BIO_reset(bio), 0)
+                    || !TEST_false(BIO_should_retry(bio))
+                    || !TEST_int_eq(BIO_get_fd(bio, NULL), -1)
+                    || !pending(bio))
+                    goto end;
+                OSSL_sleep(10);
+#if defined(__wasi__)
+                had_lookup = ((BIO_CONNECT *)BIO_get_data(bio))->lookup != NULL;
+#endif /* defined(__wasi__) */
+                if (i % 5 == 1) {
+                    if (!TEST_true(BIO_set_conn_hostname(bio, "127.0.0.1")))
+                        goto end;
+                } else if (i % 5 == 2) {
+                    if (!TEST_true(BIO_set_conn_port(bio, "443")))
+                        goto end;
+                } else if (i % 5 == 3) {
+                    if (!TEST_true(BIO_set_nbio(bio, 0)))
+                        goto end;
+                } else if (i % 5 == 4) {
+                    if (!TEST_true(BIO_set_conn_ip_family(bio, BIO_FAMILY_IPV6)))
+                        goto end;
+                }
+#if defined(__wasi__)
+                if (i % 5 != 0 && had_lookup) {
+                    if (!TEST_false(BIO_should_retry(bio))
+                        || !TEST_ptr_null(((BIO_CONNECT *)BIO_get_data(bio))->lookup))
+                        goto end;
+                }
+#endif /* defined(__wasi__) */
+                BIO_set_close(bio, BIO_NOCLOSE);
+            } else if (strcmp(mode, "cancel") == 0) {
                 struct pollfd wait;
 
                 if (!pending(bio))
@@ -147,9 +281,11 @@ static int test_io(void)
                 BIO_set_close(bio, BIO_NOCLOSE);
             BIO_free(bio);
             bio = NULL;
-            if (strcmp(mode, "borrowed") == 0) {
+            if (strcmp(mode, "borrowed") == 0
+                || (strcmp(mode, "lookup-cancel") == 0 && fd >= 0)) {
                 if (!TEST_int_ge(fcntl(fd, F_GETFD), 0)
-                    || !TEST_int_eq(send(fd, "y", 1, 0), 1))
+                    || (strcmp(mode, "borrowed") == 0
+                        && !TEST_int_eq(send(fd, "y", 1, 0), 1)))
                     goto end;
                 BIO_closesocket(fd);
             }

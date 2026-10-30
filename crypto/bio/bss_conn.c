@@ -116,12 +116,26 @@ static int conn_state(BIO *b, BIO_CONNECT *c)
                 ERR_raise(ERR_LIB_BIO, BIO_R_UNSUPPORTED_IP_FAMILY);
                 goto exit_loop;
             }
-            if (BIO_lookup(c->param_hostname, c->param_service,
-                    BIO_LOOKUP_CLIENT,
-                    family, c->connect_sock_type,
-                    &c->addr_first)
-                == 0)
-                goto exit_loop;
+#if defined(__wasi__)
+            if (c->lookup != NULL || (c->connect_mode & BIO_SOCK_NONBLOCK) != 0) {
+                BIO_clear_retry_flags(b);
+                ret = ossl_bio_lookup_wasi(&c->lookup, c->param_hostname,
+                    c->param_service, family, c->connect_sock_type, &c->addr_first);
+                if (ret < 0) {
+                    BIO_set_retry_special(b);
+                    b->retry_reason = BIO_RR_CONNECT;
+                    ret = 0;
+                }
+                if (ret == 0)
+                    goto exit_loop;
+            } else
+#endif /* defined(__wasi__) */
+                if (BIO_lookup(c->param_hostname, c->param_service,
+                        BIO_LOOKUP_CLIENT,
+                        family, c->connect_sock_type,
+                        &c->addr_first)
+                    == 0)
+                    goto exit_loop;
         }
             if (c->addr_first == NULL) {
                 ERR_raise(ERR_LIB_BIO, BIO_R_LOOKUP_RETURNED_NOTHING);
@@ -262,8 +276,21 @@ static void BIO_CONNECT_free(BIO_CONNECT *a)
     OPENSSL_free(a->param_hostname);
     OPENSSL_free(a->param_service);
     BIO_ADDRINFO_free(a->addr_first);
+#if defined(__wasi__)
+    ossl_bio_lookup_wasi_free(&a->lookup);
+#endif /* defined(__wasi__) */
     OPENSSL_free(a);
 }
+
+#if defined(__wasi__)
+void ossl_bio_wasi_cancel_lookup(BIO *bio)
+{
+    BIO *connect = BIO_find_type(bio, BIO_TYPE_CONNECT);
+
+    if (connect != NULL && ((BIO_CONNECT *)connect->ptr)->lookup != NULL)
+        (void)BIO_reset(connect);
+}
+#endif /* defined(__wasi__) */
 
 const BIO_METHOD *BIO_s_connect(void)
 {
@@ -417,6 +444,9 @@ static long conn_ctrl(BIO *b, int cmd, long num, void *ptr)
     switch (cmd) {
     case BIO_CTRL_RESET:
         ret = 0;
+#if defined(__wasi__)
+        ossl_bio_lookup_wasi_free(&data->lookup);
+#endif /* defined(__wasi__) */
         data->state = BIO_CONN_S_BEFORE;
         conn_close_socket(b);
         BIO_ADDRINFO_free(data->addr_first);
@@ -468,6 +498,9 @@ static long conn_ctrl(BIO *b, int cmd, long num, void *ptr)
         break;
     case BIO_C_SET_CONNECT:
         if (ptr != NULL) {
+#if defined(__wasi__)
+            ossl_bio_wasi_cancel_lookup(b);
+#endif /* defined(__wasi__) */
             b->init = 1;
             if (num == 0) { /* BIO_set_conn_hostname */
                 char *hold_service = data->param_service;
@@ -569,6 +602,10 @@ static long conn_ctrl(BIO *b, int cmd, long num, void *ptr)
         }
     } break;
     case BIO_C_SET_NBIO:
+#if defined(__wasi__)
+        if (num == 0)
+            ossl_bio_wasi_cancel_lookup(b);
+#endif /* defined(__wasi__) */
         if (num != 0)
             data->connect_mode |= BIO_SOCK_NONBLOCK;
         else
@@ -590,6 +627,10 @@ static long conn_ctrl(BIO *b, int cmd, long num, void *ptr)
         break;
 #endif
     case BIO_C_SET_CONNECT_MODE:
+#if defined(__wasi__)
+        if ((num & BIO_SOCK_NONBLOCK) == 0)
+            ossl_bio_wasi_cancel_lookup(b);
+#endif /* defined(__wasi__) */
         data->connect_mode = (int)num;
         if (num & BIO_SOCK_TFO)
             data->tfo_first = 1;

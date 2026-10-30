@@ -326,6 +326,90 @@ static long fail_io(BIO *bio, int oper, const char *argp, size_t len,
     return -1;
 }
 
+#if !defined(OPENSSL_NO_SOCK)
+static int test_lookup_tls(int idx)
+{
+    SSL_CTX *sctx = NULL, *cctx = NULL;
+    SSL *server = NULL, *client = NULL;
+    BIO *cbio = NULL, *sbio = NULL;
+    int ret = 0, i, lfd = -1, sfd = -1, kind = idx / 2;
+    int version = idx % 2 == 0 ? TLS1_2_VERSION : TLS1_3_VERSION;
+    struct sockaddr_in address = { 0 };
+    socklen_t addrlen = sizeof(address);
+    char port[6];
+    time_t deadline = time(NULL) + 5;
+
+#if defined(OPENSSL_NO_TLS1_2)
+    if (version == TLS1_2_VERSION)
+        return TEST_skip("TLS 1.2 disabled");
+#endif /* defined(OPENSSL_NO_TLS1_2) */
+#if defined(OPENSSL_NO_TLS1_3)
+    if (version == TLS1_3_VERSION)
+        return TEST_skip("TLS 1.3 disabled");
+#endif /* defined(OPENSSL_NO_TLS1_3) */
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (!create_ssl_ctx_pair(NULL, TLS_server_method(), TLS_client_method(),
+            version, version, &sctx, &cctx, certfile, keyfile)
+        || (kind != 2 && !TEST_true(SSL_CTX_load_verify_locations(cctx, cafile, NULL)))
+        || !TEST_ptr(client = SSL_new(cctx))
+        || !TEST_ptr(server = SSL_new(sctx)))
+        goto end;
+    SSL_set_verify(client, SSL_VERIFY_PEER, NULL);
+    if (!TEST_true(SSL_set1_dnsname(client, "server.example"))
+        || !TEST_true(SSL_set_tlsext_host_name(client, "server.example"))
+        || (kind == 1 && !TEST_true(X509_VERIFY_PARAM_set1_host(SSL_get0_param(client), "wrong.example", 0)))
+        || !TEST_int_ge(lfd = BIO_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP, BIO_SOCK_NONBLOCK), 0)
+        || !TEST_int_eq(bind(lfd, (struct sockaddr *)&address, sizeof(address)), 0)
+        || !TEST_int_eq(listen(lfd, 1), 0)
+        || !TEST_int_eq(getsockname(lfd, (struct sockaddr *)&address, &addrlen), 0)
+        || !TEST_ptr(cbio = BIO_new_connect("server.example")))
+        goto end;
+    snprintf(port, sizeof(port), "%u", ntohs(address.sin_port));
+    if (!TEST_true(BIO_set_conn_port(cbio, port))
+        || !TEST_int_eq(BIO_do_connect_retry(cbio, 5, 1), 1)
+        || !TEST_str_eq(BIO_get_conn_hostname(cbio), "server.example"))
+        goto end;
+    for (i = 0; i < 100; i++) {
+        sfd = accept(lfd, NULL, NULL);
+        if (sfd >= 0)
+            break;
+        if (!TEST_int_eq(errno, EAGAIN)
+            || !TEST_int_eq(BIO_socket_wait(lfd, 1, deadline), 1))
+            goto end;
+    }
+    if (!TEST_int_lt(i, 100)
+        || !TEST_true(BIO_socket_nbio(sfd, 1))
+        || !TEST_ptr(sbio = BIO_new_socket(sfd, BIO_CLOSE)))
+        goto end;
+    sfd = -1;
+    SSL_set_bio(client, cbio, cbio);
+    cbio = NULL;
+    SSL_set_bio(server, sbio, sbio);
+    sbio = NULL;
+    if (kind != 0) {
+        ret = TEST_false(create_ssl_connection(server, client, SSL_ERROR_SSL))
+            && TEST_long_eq(SSL_get_verify_result(client), kind == 1 ? X509_V_ERR_HOSTNAME_MISMATCH : X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY);
+    } else {
+        ret = TEST_true(create_ssl_connection(server, client, SSL_ERROR_NONE))
+            && TEST_str_eq(SSL_get0_peername(client), "server.example")
+            && TEST_str_eq(SSL_get_servername(server, TLSEXT_NAMETYPE_host_name), "server.example");
+    }
+end:
+    if (lfd >= 0)
+        BIO_closesocket(lfd);
+    if (sfd >= 0)
+        BIO_closesocket(sfd);
+    BIO_free(cbio);
+    BIO_free(sbio);
+    SSL_free(client);
+    SSL_free(server);
+    SSL_CTX_free(cctx);
+    SSL_CTX_free(sctx);
+    return ret;
+}
+#endif /* !defined(OPENSSL_NO_SOCK) */
+
 static int test_tls(int idx)
 {
     SSL_CTX *sctx = NULL, *cctx = NULL;
@@ -509,6 +593,12 @@ int setup_tests(void)
         || !TEST_int_eq(setenv("SSL_CERT_FILE", cafile, 1), 0)
         || !TEST_int_eq(setenv("SSL_CERT_DIR", "/openssl-wasi-no-ca-directory", 1), 0))
         return 0;
+#if !defined(OPENSSL_NO_SOCK)
+    if (getenv("OPENSSL_TEST_WASI_LOOKUP_TLS") != NULL) {
+        ADD_ALL_TESTS(test_lookup_tls, 6);
+        return 1;
+    }
+#endif /* !defined(OPENSSL_NO_SOCK) */
     ADD_TEST(test_crypto);
     ADD_TEST(test_nonblocking_accept);
 #if !defined(OPENSSL_NO_SOCK)

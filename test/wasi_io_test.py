@@ -21,7 +21,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 MODES = ["pending", "cancel", "denied", "dns-denied", "dns-pending",
-         "connections", "borrowed", "files", "files-denied"]
+         "connections", "borrowed", "files", "files-denied",
+         "lookup-contracts", "lookup-timeout", "lookup-cancel", "lookup-denied"]
 
 
 def host_fds(pid):
@@ -59,10 +60,10 @@ def run(args, mode, port, faults=None):
         command += ["-S", "inherit-network=y"]
     if mode == "files":
         command += ["--dir", f"{port}::/allowed"]
-    if mode == "dns-pending":
-        command += ["-S", "allow-ip-name-lookup=y"]
-    elif mode == "dns-denied":
+    if mode in ("dns-denied", "lookup-denied"):
         command += ["-S", "allow-ip-name-lookup=n"]
+    elif mode == "dns-pending" or mode.startswith("lookup-"):
+        command += ["-S", "allow-ip-name-lookup=y"]
     command += [str(args.guest.resolve()), mode, str(port)]
     if args.wasmtime == "native":
         command = [str(args.guest.resolve()), mode, str(port)]
@@ -70,14 +71,15 @@ def run(args, mode, port, faults=None):
     if faults:
         key = "DYLD_INSERT_LIBRARIES" if sys.platform == "darwin" else "LD_PRELOAD"
         env[key] = str(faults)
-    if mode in ("pending", "dns-pending"):
+    if mode in ("pending", "dns-pending", "lookup-contracts", "lookup-timeout"):
         result = subprocess.run(command, env=env, capture_output=True,
                                 text=True, timeout=8)
         if mode == "dns-pending":
             if (not result.returncode or "# resolver-pending" not in result.stderr
                     or "timed out" not in result.stderr):
                 raise RuntimeError(result.stdout + result.stderr)
-        elif (result.returncode or "# connect-pending" not in result.stderr
+        elif (result.returncode
+                or (mode == "pending" and "# connect-pending" not in result.stderr)
                 or (args.wasmtime == "native" and "# interrupted-poll" not in result.stderr)):
             raise RuntimeError(result.stdout + result.stderr)
     else:
@@ -117,6 +119,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wasmtime", help="runtime executable, or native for direct execution")
     parser.add_argument("guest", type=Path)
+    parser.add_argument("--tls-guest", type=Path)
     parser.add_argument("--mode", nargs="+", choices=MODES)
     args = parser.parse_args()
     native_modes = ["pending", "cancel", "connections", "borrowed"]
@@ -129,7 +132,7 @@ def main():
                         "-o", str(faults)], check=True)
         modes = args.mode or (native_modes if args.wasmtime == "native" else MODES)
         for mode in modes:
-            if mode in ("connections", "borrowed"):
+            if mode in ("connections", "borrowed", "lookup-timeout"):
                 with socket.socket() as listener, ThreadPoolExecutor(max_workers=1) as pool:
                     listener.bind(("127.0.0.1", 0))
                     listener.listen()
@@ -137,7 +140,8 @@ def main():
                     stop = threading.Event()
                     task = pool.submit(accept_connections, listener, stop)
                     try:
-                        run(args, mode, listener.getsockname()[1])
+                        run(args, mode, listener.getsockname()[1],
+                            faults if mode == "lookup-timeout" else None)
                     finally:
                         stop.set()
                         task.result(timeout=5)
@@ -154,6 +158,21 @@ def main():
                 run(args, mode, allowed if mode == "files" else secret)
             else:
                 run(args, mode, 10 if mode == "denied" else 9, faults)
+        if args.tls_guest:
+            env = dict(os.environ)
+            key = "DYLD_INSERT_LIBRARIES" if sys.platform == "darwin" else "LD_PRELOAD"
+            env[key] = str(faults)
+            command = [args.wasmtime, "run", "-W", "timeout=30s",
+                       "-S", "inherit-network=y", "-S", "allow-ip-name-lookup=y",
+                       "-S", "max-resources=64", "-S", "max-component-handles=128",
+                       "--dir", str(ROOT), "--env", "OPENSSL_TEST_WASI_LOOKUP_TLS=1",
+                       str(args.tls_guest.resolve())]
+            command += [str(ROOT / "test/certs" / name) for name in
+                        ("servercert.pem", "serverkey.pem", "rootcert.pem")]
+            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=40)
+            if result.returncode:
+                raise RuntimeError(result.stdout + result.stderr)
+            print("PASS: TLS lookup, SNI and peer verification", flush=True)
 
 
 if __name__ == "__main__":

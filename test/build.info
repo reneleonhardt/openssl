@@ -728,10 +728,29 @@ IF[{- !$disabled{tests} -}]
   ENDIF
 
   IF[{- $config{target} =~ /^wasm32-wasip/ && !$disabled{sock} -}]
-    PROGRAMS{noinst}=wasi_io_test
+    PROGRAMS{noinst}=wasi_io_test wasi_bio_test
     SOURCE[wasi_io_test]=wasi_io_test.c
     INCLUDE[wasi_io_test]=../include ../apps/include ..
     DEPEND[wasi_io_test]=../libcrypto libtestutil.a
+    SOURCE[wasi_bio_test]=wasi_bio_test.c
+    INCLUDE[wasi_bio_test]=../include ..
+    DEPEND[wasi_bio_test]=../libcrypto
+    UNIT_TEST[wasi_bio_test]=
+    WRAP[wasi_bio_test]=free CRYPTO_zalloc CRYPTO_strdup getaddrinfo inet_ntop \
+      time OSSL_sleep BIO_socket BIO_connect BIO_socket_wait \
+      BIO_sock_error BIO_closesocket
+    IF[{- $config{target} eq "wasm32-wasip2" -}]
+      WRAP[wasi_bio_test]=instance_network_instance_network network_network_drop_own \
+        ip_name_lookup_resolve_addresses \
+        ip_name_lookup_method_resolve_address_stream_resolve_next_address \
+        ip_name_lookup_method_resolve_address_stream_subscribe \
+        poll_method_pollable_ready poll_pollable_drop_own \
+        ip_name_lookup_resolve_address_stream_drop_own
+    ELSE
+      WRAP[wasi_bio_test]=ossl_wasi_resolve_addresses wasip3_waitable_set_new \
+        wasip3_waitable_join wasip3_waitable_set_poll wasip3_thread_yield \
+        wasip3_subtask_cancel wasip3_subtask_drop wasip3_waitable_set_drop
+    ENDIF
   ENDIF
 
   SOURCE[handshake-memfail]=handshake-memfail.c helpers/ssltestlib.c
